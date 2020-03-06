@@ -1,0 +1,304 @@
+<html>
+<head>
+<title>WebGL</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<style type="text/css">
+    body {
+        overflow: hidden;
+    }
+
+    canvas {
+        position: fixed;
+        display: block;
+        width: 100%;
+        height: 100%;
+        top: 0;
+        left: 0;
+    }
+</style>
+
+<!-- External libs -->
+<!-- http://glmatrix.net/docs/2.1.0/ -->
+<script type="text/javascript" src="lib/gl-matrix-min.js"></script>
+<!-- http://underscorejs.org/ -->
+<script type="text/javascript" src="lib/underscore-min.js"></script>
+<!-- http://api.jquery.com/ -->
+<script type="text/javascript" src="lib/jquery-2.0.3.min.js"></script>
+
+<!-- source code -->
+<script type="text/javascript" src="lib/GL.js"></script>
+<script type="text/javascript" src="lib/FileLoader.js"></script>
+<script type="text/javascript" src="lib/Events.js"></script>
+<script type="text/javascript" src="lib/KeyMapping.js"></script>
+<script type="text/javascript" src="lib/KeyboardManager.js"></script>
+<script type="text/javascript" src="lib/MouseManager.js"></script>
+
+<script type="text/javascript" src="lib/Texture.js"></script>
+<script type="text/javascript" src="lib/RenderTarget.js"></script>
+<script type="text/javascript" src="lib/Material.js"></script>
+<script type="text/javascript" src="lib/Object3D.js"></script>
+<script type="text/javascript" src="lib/Mesh.js"></script>
+
+<script type="text/javascript" src="lib/Renderer.js"></script>
+<script type="text/javascript" src="lib/Camera.js"></script>
+
+<script type="text/javascript">
+    function start() {
+        Events.InitializeEvents();
+        var canvas = document.getElementById("renderingCanvas");
+
+        var camera = new Camera({
+            pos: {x: -750, y: 750, z: 5000},
+            target: {x: 0, y: 0, z: 0},
+            fov: Math.PI / 3,
+            aspectRatio: canvas.width / canvas.height,
+            near: 5.0,
+            far: 1000000.0
+        });
+
+        var glParams = {
+            alpha: false,
+            depth: true,
+            stencil: false,
+            antialias: true,
+            premultipliedAlpha: false,
+            preserveDrawingBuffer: false,
+            preferLowPowerToHighPerformance: false,
+            failIfMajorPerformanceCaveat: false
+        };
+        var renderer = new Renderer(canvas, glParams);
+        camera.bindCommands(renderer.keyboardManager);
+
+        var lightDirection = vec3.fromValues(0.5, 0.1, 0.2);
+        var lightColor = vec3.fromValues(0.9, 0.7, 0.7);
+        var ambientColor = vec3.fromValues(0.05, 0.05, 0.05);
+        var lightSpecColor = vec3.fromValues(1.0, 0.6, 0.0);
+        var fogNear = camera.far / 3;
+        var fogFar = camera.far / 2;
+
+        var skyMesh = new Mesh("sky");
+        skyMesh.loadFromObjFile("data/sphere.obj");
+        var skyMat = new Material("skyMat", "data/shader/default.vShader", "data/shader/default.fShader",
+                function (mat) {
+                    var tex = new Texture("data/stars.jpg");
+                    mat.uniforms["texture0"].texture = tex;
+                    tex.wrapping = GL.REPEAT;
+                    tex.minFilter = GL.NEAREST;
+                    tex.magFilter = GL.NEAREST;
+                });
+        var skyObject = new Object3D(skyMesh, skyMat);
+        var scale = camera.far * 0.9;
+        skyObject.setScale(scale, scale, scale);
+
+        var planetsMesh = new Mesh("generatedPlanets");
+        planetsMesh.primitiveType = GL.POINTS;
+        var planetsMapping = [
+            {dir: vec3.fromValues(0.1,0.1,-0.7), offsetU: 0, offsetV: 0.5, size: 50000000}, // Death Star
+            {dir: vec3.fromValues(0.3,-0.2,-0.9), offsetU: 0, offsetV: 0, size: 300000000}, // Tatooin
+            {dir: vec3.fromValues(-1,-0.3,0), offsetU: 0.5, offsetV: 0, size: 300000000}, // Dagobah
+            {dir: lightDirection, offsetU: 0.5, offsetV: 0.5, size: 150000000} // Sun
+
+        ];
+        _.each(planetsMapping, function(mapping) {
+            vec3.normalize(mapping.dir, mapping.dir);
+            vec3.scale(mapping.dir, mapping.dir, 0.9 * camera.far);
+
+            planetsMesh._positions.push( mapping.dir[0], mapping.dir[1], mapping.dir[2] );
+            planetsMesh._normals.push( mapping.offsetU, mapping.offsetV, mapping.size );
+        });
+
+        var planetsMat = new Material("planetsMat", "data/shader/pointWithAtlas.vShader", "data/shader/pointWithAtlas.fShader",
+                function(mat) {
+                    var tex = new Texture("data/planets.png");
+                    tex.minFilter = GL.LINEAR_MIPMAP_LINEAR;
+                    mat.uniforms["texture0"].texture = tex;
+                });
+        planetsMat.zTest = false;
+        planetsMat.zWrite = false;
+        planetsMat.blendEquation = GL.FUNC_ADD;
+        planetsMat.srcBlend = GL.SRC_ALPHA;
+        planetsMat.dstBlend = GL.ONE_MINUS_SRC_ALPHA;
+
+        var planetsObject = new Object3D(planetsMesh, planetsMat);
+
+        var xMesh = new Mesh("x-wing");
+        xMesh.loadFromObjFile("data/x_wing.obj");
+
+        var xMat = new Material("xWingMat", "data/shader/dirLightSimple.vShader", "data/shader/default.fShader",
+                function (mat) {
+                    mat.uniforms["texture0"].texture = new Texture("data/x-wing.png");
+                    mat.uniforms["lightDir"].value = lightDirection;
+                });
+        var xWingObject = new Object3D(xMesh, xMat);
+
+        var randomPos = function () {
+            return Math.random() - 0.5;
+        };
+        var reactorMesh = new Mesh("generatedReactor");
+        reactorMesh.primitiveType = GL.POINTS;
+        for (var i = 0; i < 300; ++i)
+            reactorMesh._positions.push(randomPos(), randomPos(), randomPos());
+
+        //todo implémenter un material en point sprite pour les réacteurs
+        var reactorMat = new Material("reactor", "data/shader/fire.vShader", "data/shader/fire.fShader",
+                function (mat) {
+                    mat.uniforms["texture0"].texture = new Texture("data/smoke.png");
+                });
+
+        reactorMat.blendEquation = GL.FUNC_ADD;
+        reactorMat.zWrite = false;
+        reactorMat.srcBlend = GL.SRC_ALPHA;
+        reactorMat.dstBlend = GL.ONE;
+        var reactors = [];
+        var reactorPos = [
+            [160, 160, 750],
+            [-160, 160, 750],
+            [-160, -160, 750],
+            [160, -160, 750]
+        ];
+        _.each(reactorPos, function (pos) {
+            var reactorObject = new Object3D(reactorMesh, reactorMat);
+            reactorObject.setPosition(pos[0], pos[1], pos[2]);
+            xWingObject.addChild(reactorObject);
+            reactors.push(reactorObject);
+        });
+
+        var asteroidMesh = new Mesh("asteroid");
+        asteroidMesh.loadFromObjFile("data/asteroid.obj");
+        //todo implémenter un dirLight avec du Fog pour les astéroides
+        var asteroidMat = new Material("asteroidMat", "data/shader/dirLightSimple.vShader", "data/shader/default.fShader",
+                function (mat) {
+                    mat.uniforms["texture0"].texture = new Texture("data/noise.png");
+                    mat.uniforms["lightDir"].value = lightDirection;
+                });
+
+        var trajectories = [
+            {start: [-50000, 10000, -fogFar], end: [-40000, 15000, fogFar], minScale: 7, maxScale: 13},
+            {start: [-2000, 2000, -fogFar], end: [-5000, 1000, fogFar], minScale: 1, maxScale: 2},
+            {start: [-4000, -6000, -fogFar], end: [-5000, -3000, fogFar], minScale: 1, maxScale: 2},
+            {start: [-10000, -500, -fogFar], end: [-20000, 1000, fogFar], minScale: 1, maxScale: 3},
+            {start: [10000, -10000, -fogFar], end: [20000, -10000, fogFar], minScale: 2, maxScale: 4},
+            {start: [3250, 2000, -fogFar], end: [4310, -1000, fogFar], minScale: 1, maxScale: 3},
+            {start: [10000, 20000, -fogFar], end: [12000, -20000, fogFar], minScale: 5, maxScale: 10},
+            {start: [0, 2000, -fogFar], end: [600, -7000, fogFar], minScale: 1, maxScale: 3}
+        ];
+        var trajectoryIdx = 0;
+        var randomMoveAsteroid = function (asteroidObject) {
+            var speed = 10000 + 20000 * Math.random();
+            trajectoryIdx = (trajectoryIdx + 1) % trajectories.length;
+            var t = trajectories[trajectoryIdx];
+            var randomScale = function () {
+                return t.minScale + Math.random() * (t.maxScale - t.minScale);
+            };
+            asteroidObject.setScale(randomScale(), randomScale(), randomScale());
+            asteroidObject.setPosition(t.start[0], t.start[1], t.start[2]);
+            asteroidObject.moveTo(t.end[0], t.end[1], t.end[2], speed, randomMoveAsteroid);
+        };
+        var asteroids = [];
+        var asteroidCount = 50;
+        var spawnAsteroid = function () {
+            var asteroid = new Object3D(asteroidMesh, asteroidMat);
+            randomMoveAsteroid(asteroid);
+            asteroids.push(asteroid);
+            if (asteroids.length < asteroidCount)
+                window.setTimeout(spawnAsteroid, Math.random() * 3000);
+        };
+        spawnAsteroid();
+
+        //special 2D effect
+        var depthTarget = new RenderTarget(canvas.width, canvas.height, true, false);
+
+        var quad = new Mesh();
+        quad._positions.push(-1, 1, 0, -1, -1, 0, 1, -1, 0, -1, 1, 0, 1, -1, 0, 1, 1, 0);
+        var outlineMat = new Material("outline", "data/shader/renderTexture.vShader", "data/shader/outline.fShader",
+            function (mat) {
+                mat.uniforms["texture0"].texture = depthTarget;
+                mat.uniforms["invScreenSize"].value = vec2.fromValues(1 / canvas.width, 1 / canvas.height);
+            });
+        outlineMat.zWrite = false;
+        outlineMat.zTest = false;
+        outlineMat.dstBlend = GL.ONE_MINUS_SRC_ALPHA;
+        outlineMat.srcBlend = GL.SRC_ALPHA;
+        outlineMat.blendEquation = GL.FUNC_ADD;
+
+        var screenQuad = new Object3D(quad, outlineMat);
+        var depthMat = new Material("depth", "data/shader/depth.vShader", "data/shader/depth.fShader");
+        depthMat.blendEquation = false;
+
+        function resize(size) {
+            depthTarget.resize(renderer.gl, size.w, size.h);
+            outlineMat.uniforms["invScreenSize"].value = vec2.fromValues(1 / size.w, 1 / size.h);
+        }
+
+        Events.AddEventListener(Events.onResize, resize);
+
+        var currentTime = 0;
+        var frameCounter = 0;
+        function render(deltaTime) {
+            currentTime += deltaTime * 0.001;
+            renderer.setCamera(camera);
+
+            //compute every movements
+            skyObject.setPosition(camera.position[0], camera.position[1], camera.position[2]);
+            //todo bonus: animer les étoiles
+
+            var i = 0;
+            _.each(asteroids, function (asteroid) {
+                i++;
+                asteroid.setRotation(
+                    asteroid.rotation[0] + deltaTime * 0.001 * Math.cos(i),
+                    asteroid.rotation[1] + deltaTime * 0.001 * Math.sin(i),
+                    asteroid.rotation[2] + deltaTime * 0.001 * Math.cos(i)
+                );
+            });
+
+            xWingObject.setRotation(
+                Math.cos(frameCounter++ * 0.007) / 17 ,
+                Math.sin(frameCounter++ * 0.008) / 22 ,
+                Math.cos(frameCounter++ * 0.01) / 20
+            );
+
+            xWingObject.setPosition(
+                Math.cos(frameCounter++ * 0.003) * 10,
+                Math.sin(frameCounter++ * 0.005) * 87,
+                0
+            );
+            // depth pass
+
+            renderer.setRenderTarget(depthTarget);
+            renderer.clear({r: 1, g: 1, b: 1, a: 1});
+            renderer.renderObject(xWingObject, depthMat);
+            _.each(asteroids, function (asteroid) {
+                renderer.renderObject(asteroid, depthMat);
+            });
+
+
+            // color pass
+            renderer.setRenderTarget(null);
+            renderer.clear();
+
+            renderer.renderObject(skyObject);
+            renderer.renderObject(planetsObject);
+            renderer.renderObject(xWingObject);
+
+            _.each(asteroids, function (asteroid) {
+                renderer.renderObject(asteroid);
+            });
+
+            renderer.renderObject(screenQuad, outlineMat);
+
+            _.each(reactors, function (reactor) {
+                renderer.renderObject(reactor);
+            });
+        }
+        Events.AddEventListener(Events.onRender, render);
+    }
+</script>
+</head>
+<body onload="start();" oncontextmenu="return false;">
+<div>
+    <canvas id="renderingCanvas"></canvas>
+</div>
+</body>
+</html>
